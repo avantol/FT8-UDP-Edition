@@ -112,7 +112,13 @@ void MessageClient::impl::set_server (QString const& server_name, QStringList co
   network_interfaces_.clear ();
   for (auto const& net_if_name : network_interface_names)
     {
-      network_interfaces_.push_back (QNetworkInterface::interfaceFromName (net_if_name));
+      // avt 10/18/26 saved interface names go stale when adapters are
+      // renumbered, and an invalid interface silently sends nowhere
+      auto const& net_if = QNetworkInterface::interfaceFromName (net_if_name);
+      if (net_if.isValid ())
+        {
+          network_interfaces_.push_back (net_if);
+        }
     }
 
   if (server_.isNull () && server_name.size ()) // DNS lookup required
@@ -487,13 +493,24 @@ void MessageClient::impl::send_message (QByteArray const& message, bool queue_if
             {
               if (is_multicast_address (server_))
                 {
-                  // send datagram on each selected network interface
-                  std::for_each (network_interfaces_.begin (), network_interfaces_.end ()
-                                 , [&] (QNetworkInterface const& net_if) {
-                                     setMulticastInterface (net_if);
-                                     // qDebug () << "Multicast UDP datagram sent to:" << server_ << "port:" << server_port_ << "on:" << multicastInterface ().humanReadableName ();
-                                     writeDatagram (message, server_, server_port_);
-                                   });
+                  if (network_interfaces_.size ())
+                    {
+                      // send datagram on each selected network interface
+                      std::for_each (network_interfaces_.begin (), network_interfaces_.end ()
+                                     , [&] (QNetworkInterface const& net_if) {
+                                         setMulticastInterface (net_if);
+                                         // qDebug () << "Multicast UDP datagram sent to:" << server_ << "port:" << server_port_ << "on:" << multicastInterface ().humanReadableName ();
+                                         writeDatagram (message, server_, server_port_);
+                                       });
+                    }
+                  else
+                    {
+                      // avt 10/18/26 with no usable interface selected
+                      // this loop used to send nothing at all, silently,
+                      // until the program was restarted. Send on the
+                      // default interface instead.
+                      writeDatagram (message, server_, server_port_);
+                    }
                 }
               else
                 {

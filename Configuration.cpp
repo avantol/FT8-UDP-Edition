@@ -2265,11 +2265,11 @@ void Configuration::impl::initialize_models ()
   ui_->udp_server_line_edit->setEnabled(true);
   on_udp_server_line_edit_editingFinished ();
   ui_->udp_server_port_spin_box->setValue (udp_server_port_);
+  // avt 10/18/26 only show the saved selection here. This used to copy
+  // the combo box back into udp_interface_names_, so merely opening
+  // Settings turned an empty (use any interface) selection into the
+  // loopback interface, which OK then saved.
   load_network_interfaces (ui_->udp_interfaces_combo_box, udp_interface_names_);
-  if (!udp_interface_names_.size ())
-    {
-      udp_interface_names_ = get_selected_network_interfaces (ui_->udp_interfaces_combo_box);
-    }
   ui_->udp_TTL_spin_box->setValue (udp_TTL_);
   ui_->accept_udp_requests_check_box->setChecked (accept_udp_requests_);
   ui_->accept_udp_requests_check_box->setEnabled(false);      //avt 12/28/23  prevent disabling "accept UDP requests"
@@ -2673,6 +2673,29 @@ void Configuration::impl::read_settings ()
   opCall_ = settings_->value ("OpCall", "").toString ();
   udp_server_name_ = settings_->value ("UDPServer", "127.0.0.1").toString ();
   udp_interface_names_ = settings_->value ("UDPInterface").toStringList ();
+
+  //avt 10/18/26 one-time migration. Older builds saved the loopback
+  //interface whenever nothing was selected, because opening Settings
+  //copied the combo box default into this setting. For a multicast UDP
+  //server that limits sending to loopback, so clear it once and let an
+  //empty selection mean "any interface" again. A deliberate loopback
+  //choice made after this runs is kept.
+  if (!settings_->value ("UDPInterfaceMigrated", false).toBool ())
+    {
+      if (1 == udp_interface_names_.size ())
+        {
+          for (auto const& net_if : QNetworkInterface::allInterfaces ())
+            {
+              if ((net_if.flags () & QNetworkInterface::IsLoopBack)
+                  && net_if.name () == udp_interface_names_.at (0))
+                {
+                  udp_interface_names_.clear ();
+                  break;
+                }
+            }
+        }
+      settings_->setValue ("UDPInterfaceMigrated", true);
+    }
   udp_TTL_ = settings_->value ("UDPTTL", 1).toInt ();
   udp_server_port_ = settings_->value ("UDPServerPort", 2237).toUInt ();
   n1mm_server_name_ = settings_->value ("N1MMServer", "127.0.0.1").toString ();
@@ -2938,7 +2961,15 @@ void Configuration::impl::write_settings ()
   settings_->setValue ("OpCall", opCall_);
   settings_->setValue ("UDPServer", udp_server_name_);
   settings_->setValue ("UDPServerPort", udp_server_port_);
-  settings_->setValue ("UDPInterface", QVariant::fromValue (udp_interface_names_));
+  //avt 10/18/26 an empty list stores as "@Invalid()", remove it instead
+  if (udp_interface_names_.size ())
+    {
+      settings_->setValue ("UDPInterface", QVariant::fromValue (udp_interface_names_));
+    }
+  else
+    {
+      settings_->remove ("UDPInterface");
+    }
   settings_->setValue ("UDPTTL", udp_TTL_);
   settings_->setValue ("N1MMServer", n1mm_server_name_);
   settings_->setValue ("N1MMServerPort", n1mm_server_port_);
@@ -3537,6 +3568,16 @@ void Configuration::impl::accept ()
 
   auto new_server = ui_->udp_server_line_edit->text ().trimmed ();
   auto new_interfaces = get_selected_network_interfaces (ui_->udp_interfaces_combo_box);
+  //avt 10/18/26 the combo box always shows at least one interface
+  //checked, and falls back to loopback when nothing is saved. Don't let
+  //that display default, or an empty combo box, become a saved
+  //selection the operator never made.
+  if (!udp_interface_names_.size ()
+      && (!new_interfaces.size ()
+          || new_interfaces == QStringList {loopback_interface_name_}))
+    {
+      new_interfaces = udp_interface_names_;     // leave it unset
+    }
   if (new_server != udp_server_name_ || new_interfaces != udp_interface_names_)
     {
       udp_server_name_ = new_server;
