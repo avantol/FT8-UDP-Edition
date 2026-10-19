@@ -113,9 +113,14 @@ void MessageClient::impl::set_server (QString const& server_name, QStringList co
   for (auto const& net_if_name : network_interface_names)
     {
       // avt 10/18/26 saved interface names go stale when adapters are
-      // renumbered, and an invalid interface silently sends nowhere
+      // renumbered, and an unusable interface silently sends nowhere.
+      // Keep only what the Settings list would offer today, the same
+      // test as Configuration::impl::load_network_interfaces (). If
+      // nothing survives, send_message () falls back to the default
+      // interface rather than sending nothing at all.
       auto const& net_if = QNetworkInterface::interfaceFromName (net_if_name);
-      if (net_if.isValid ())
+      auto const flags = QNetworkInterface::IsUp | QNetworkInterface::CanMulticast;
+      if (net_if.isValid () && (net_if.flags () & flags) == flags)
         {
           network_interfaces_.push_back (net_if);
         }
