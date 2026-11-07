@@ -18020,6 +18020,14 @@ void MainWindow::on_actionDownload_from_LOTW_triggered()
       .arg(startDate);
   debugToFile("actionDow    url:" + url);
   current_url = QUrl(url);
+  // Route download_finished to this handler only. Connecting on every
+  // download used to stack up duplicate connections (the 'duplicate calls'
+  // the ReqReply flags work around), and left the other handler connected
+  // too, so a later QSO download could also trigger the QSL merge early.
+  // (A connection made while download_finished is being emitted, as
+  // downloadQslOnly() does from downloadQsoComplete(), is not called for
+  // that emission.)
+  disconnect(this, &MainWindow::download_finished, this, nullptr);
   connect(this, &MainWindow::download_finished, this, &MainWindow::downloadQsoComplete);
   download(current_url);
 }
@@ -18114,6 +18122,14 @@ void MainWindow::downloadQslOnly()
       .arg(endDate);
   debugToFile("dlQslOnly    url:" + url);
   current_url = QUrl(url);
+  // Route download_finished to this handler only. Connecting on every
+  // download used to stack up duplicate connections (the 'duplicate calls'
+  // the ReqReply flags work around), and left the other handler connected
+  // too, so a later QSO download could also trigger the QSL merge early.
+  // (A connection made while download_finished is being emitted, as
+  // downloadQslOnly() does from downloadQsoComplete(), is not called for
+  // that emission.)
+  disconnect(this, &MainWindow::download_finished, this, nullptr);
   connect(this, &MainWindow::download_finished, this, &MainWindow::downloadQslComplete);
   download(current_url);
 }
@@ -18316,12 +18332,12 @@ void MainWindow::uploadToLotw()
   last_tx_label.setText(tr ("Uploading to LOTW..."));
   
   connect(upLotw, static_cast<void (QProcess::*) (int, QProcess::ExitStatus)> (&QProcess::finished),   //avt 4/1/25
-          [this] (int exitCode, QProcess::ExitStatus status) {
+          this, [this] (int exitCode, QProcess::ExitStatus status) {
             MainWindow::uploadLotwFinished (exitCode, status);
           });
   connect(upLotw, static_cast<void (QProcess::*) (QProcess::ProcessError)> (&QProcess::errorOccurred),
-          [this] (QProcess::ProcessError error) {
-            MainWindow::lotwError (upLotw, error);
+          this, [this] (QProcess::ProcessError error) {
+            MainWindow::lotwError (error);
           });
   
   m_logbookRead = false;    //avt 9/23/25 block settings changes and requesting up/download
@@ -18343,9 +18359,7 @@ void MainWindow::uploadLotwFinished(int exitCode, QProcess::ExitStatus exitStatu
       debugToFile("upldFin      removed " + adiTmpFilePathName);
     }
     if (!m_remoteCmd) MessageBox::information_message (this, "TQSL stopped unexpectedly");   //avt 1/5/26
-    delete upLotw;
-    upLotw = nullptr;
-    updateLotwCtrls();
+    finishLotwProcess();
     if (m_remoteCmd) sendDetail(LOTW_UPL, "TQSL stopped unexpectedly");   //avt 1/5/26
     return;
   }
@@ -18411,22 +18425,37 @@ void MainWindow::uploadLotwFinished(int exitCode, QProcess::ExitStatus exitStatu
     QFile::remove(adiTmpFilePathName);
     debugToFile("upldFin      removed " + adiTmpFilePathName);
   }
-  delete upLotw;
-  upLotw = nullptr;
-  updateLotwCtrls();
+  finishLotwProcess();
   cleanupAdiBackupFiles();
 }
 
 //avt
-void MainWindow::lotwError (QProcess * process, QProcess::ProcessError)
+void MainWindow::lotwError (QProcess::ProcessError error)
 {
-  m_logbookRead = true;
-  debugToFile("lotwError    error");
+  debugToFile(QString{"lotwError    error:%1"}.arg(int(error)));
+  // A crash is followed by finished(CrashExit), which reports it and
+  // cleans up; ReadError/WriteError/UnknownError don't stop the process,
+  // so finished() still follows. Only release the process here if it is
+  // no longer running, i.e. no finished() is coming.
+  if (error == QProcess::Crashed) return;
   if (!m_remoteCmd) MessageBox::warning_message (this, tr ("LOTW process error"));   //avt 1/5/26
-  delete process;
-  process = nullptr;  
+  if (m_remoteCmd) sendDetail(LOTW_UPL, "Upload process error");   //avt 1/5/26
+  if (upLotw && upLotw->state() == QProcess::NotRunning) finishLotwProcess();
+}
+
+void MainWindow::finishLotwProcess ()
+{
+  // Called from upLotw's own signal handlers: deleting the sender there is
+  // unsafe, so disconnect it (no further signals) and defer the delete.
+  // Clearing the member (not a copy) is what re-enables closing the window
+  // and further LotW uploads/downloads.
+  if (upLotw) {
+    upLotw->disconnect(this);
+    upLotw->deleteLater();
+    upLotw = nullptr;
+  }
+  m_logbookRead = true;
   updateLotwCtrls();
-  if (m_remoteCmd) if (m_remoteCmd) sendDetail(LOTW_UPL, "Upload process error");   //avt 1/5/26
 }
 
 //avt

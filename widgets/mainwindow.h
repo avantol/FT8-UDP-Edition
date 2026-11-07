@@ -1131,7 +1131,8 @@ private:
   void download_abort (QPointer<QNetworkReply>);     //avt 9/23/25
   void load_finished (bool);     //avt 9/23/25
   void uploadLotwFinished(int, QProcess::ExitStatus);      //avt 9/23/25
-  void lotwError (QProcess *, QProcess::ProcessError);      //avt 9/23/25
+  void lotwError (QProcess::ProcessError);      //avt 9/23/25
+  void finishLotwProcess ();   // the one place upLotw is released
   void cleanupAdiBackupFiles();      //avt 9/23/25
   void downloadQslOnly();      //avt 9/23/25
   void updateLotwCtrls();      //avt 9/23/25
